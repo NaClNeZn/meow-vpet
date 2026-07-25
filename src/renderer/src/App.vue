@@ -1,0 +1,193 @@
+<script setup lang="ts">
+import { ref, onMounted, computed, watch } from 'vue'
+import Live2DCanvas from './components/Live2DCanvas.vue'
+import ChatPanel from './components/ChatPanel.vue'
+import Settings from './views/Settings.vue'
+import { useConfigStore } from './stores/config'
+import { setBaseUrl } from './api/client'
+
+const configStore = useConfigStore()
+
+const status = ref('启动中...')
+const modelLoaded = ref(false)
+const backendStatus = ref<string>('starting')
+const showChat = ref(false)
+const showSettings = ref(false)
+// 从配置读取 agentId
+const agentId = ref<string | undefined>(undefined)
+
+const backendReady = computed(() => backendStatus.value === 'ready')
+
+onMounted(async () => {
+  if (window.app) {
+    // Electron 环境:通过主进程 IPC 获取后端状态
+    window.app.onBackendStatusChange((s: string) => {
+      backendStatus.value = s
+      updateStatus()
+    })
+    // 主动查询当前后端状态,补齐页面加载前错过的 IPC 事件
+    const currentStatus = await window.app.getBackendStatus()
+    backendStatus.value = currentStatus
+    updateStatus()
+    // 监听「打开设置」菜单事件(托盘/右键菜单触发)
+    window.app.onOpenSettings(() => {
+      showSettings.value = true
+    })
+  } else {
+    // 浏览器环境(直接访问 dev server):主动探测后端健康检查
+    backendStatus.value = 'waiting'
+    updateStatus()
+    try {
+      const res = await fetch('http://localhost:4399/api')
+      if (res.ok) {
+        backendStatus.value = 'ready'
+      } else {
+        backendStatus.value = 'error'
+      }
+    } catch {
+      backendStatus.value = 'error'
+    }
+    updateStatus()
+  }
+  // 加载持久化配置
+  await configStore.loadFromBackend()
+  if (configStore.config) {
+    agentId.value = configStore.config.agentId
+    // 同步后端地址到 API 客户端
+    setBaseUrl(configStore.config.meowToolUrl)
+  } else if (!window.app) {
+    // 浏览器环境没有配置时,使用默认地址
+    setBaseUrl('http://localhost:4399')
+  }
+})
+
+// 配置变化时同步 agentId
+watch(
+  () => configStore.config?.agentId,
+  (val) => {
+    agentId.value = val
+  }
+)
+
+function updateStatus() {
+  const map: Record<string, string> = {
+    starting: '正在启动后端...',
+    waiting: '等待后端就绪...',
+    ready: '就绪',
+    timeout: '后端启动超时',
+    error: '后端启动失败'
+  }
+  status.value = map[backendStatus.value] || backendStatus.value
+}
+
+function onModelLoaded() {
+  modelLoaded.value = true
+}
+
+// 上一次 setIgnoreMouseEvents 的状态,用于去重避免冗余 IPC 调用
+let lastIgnoreState: boolean | null = null
+let ignoreInitialized = false
+function onPointerMove(isHit: boolean) {
+  // 策略:鼠标在窗口内时不穿透,让所有鼠标事件正常派发(避免穿透→不穿透切换吞 click)
+  // 代价:透明区域会挡住桌面点击,但桌宠场景可接受(用户很少点击桌宠背后的桌面)
+  if (window.app && !showChat.value && !showSettings.value) {
+    // 首次调用时设为不穿透,之后不再切换
+    if (!ignoreInitialized) {
+      window.app.setIgnoreMouseEvents(false)
+      lastIgnoreState = false
+      ignoreInitialized = true
+    }
+  }
+}
+
+function toggleChat() {
+  showChat.value = !showChat.value
+}
+
+// 设置面板保存后刷新 agentId 和后端地址
+function onSettingsSaved() {
+  if (configStore.config) {
+    agentId.value = configStore.config.agentId
+    setBaseUrl(configStore.config.meowToolUrl)
+  }
+}
+</script>
+
+<template>
+  <div class="app">
+    <Live2DCanvas
+      @model-loaded="onModelLoaded"
+      @pointer-move="onPointerMove"
+    />
+    <div v-if="!modelLoaded" class="loading">{{ status }}</div>
+    <button
+      v-if="modelLoaded"
+      class="toggle-chat-btn"
+      @click="toggleChat"
+    >
+      {{ showChat ? '×' : '+' }}
+    </button>
+    <ChatPanel
+      v-if="showChat && modelLoaded"
+      :backend-ready="backendReady"
+      :agent-id="agentId"
+    />
+    <Settings
+      v-model:visible="showSettings"
+      @saved="onSettingsSaved"
+    />
+  </div>
+</template>
+
+<style scoped>
+.app {
+  /* 固定 px 尺寸,与主进程窗口 360x480 一致(不用 100vw/100vh,
+     透明窗口下 vw/vh 有亚像素抖动会导致绝对定位元素漂移) */
+  width: 360px;
+  height: 480px;
+  background: transparent;
+  position: relative;
+  font-family: system-ui, -apple-system, sans-serif;
+  user-select: none;
+  overflow: hidden;
+}
+.loading {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  padding: 12px 20px;
+  background: rgba(255, 255, 255, 0.8);
+  border-radius: 8px;
+  font-size: 14px;
+  color: #333;
+}
+.toggle-chat-btn {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.9);
+  border: none;
+  font-size: 16px;
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+  /* 防止 drag 覆盖层激活时按钮被拖拽区域吞掉 */
+  -webkit-app-region: no-drag;
+}
+.toggle-chat-btn:hover {
+  background: rgba(255, 255, 255, 1);
+}
+/* ChatPanel 定位在右侧 */
+.app :deep(.chat-panel) {
+  position: absolute;
+  top: 48px;
+  right: 8px;
+}
+</style>
