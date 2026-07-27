@@ -13,8 +13,9 @@ const modelLoaded = ref(false)
 const backendStatus = ref<string>('starting')
 const showChat = ref(false)
 const showSettings = ref(false)
-// 从配置读取 agentId
+// 从配置读取 agentId / systemPrompt
 const agentId = ref<string | undefined>(undefined)
+const systemPrompt = ref<string | undefined>(undefined)
 
 const backendReady = computed(() => backendStatus.value === 'ready')
 
@@ -53,6 +54,7 @@ onMounted(async () => {
   await configStore.loadFromBackend()
   if (configStore.config) {
     agentId.value = configStore.config.agentId
+    systemPrompt.value = configStore.config.systemPrompt
     // 同步后端地址到 API 客户端
     setBaseUrl(configStore.config.meowToolUrl)
   } else if (!window.app) {
@@ -61,11 +63,17 @@ onMounted(async () => {
   }
 })
 
-// 配置变化时同步 agentId
+// 配置变化时同步 agentId / systemPrompt
 watch(
   () => configStore.config?.agentId,
   (val) => {
     agentId.value = val
+  }
+)
+watch(
+  () => configStore.config?.systemPrompt,
+  (val) => {
+    systemPrompt.value = val
   }
 )
 
@@ -104,10 +112,11 @@ function toggleChat() {
   showChat.value = !showChat.value
 }
 
-// 设置面板保存后刷新 agentId 和后端地址
+// 设置面板保存后刷新 agentId / systemPrompt 和后端地址
 function onSettingsSaved() {
   if (configStore.config) {
     agentId.value = configStore.config.agentId
+    systemPrompt.value = configStore.config.systemPrompt
     setBaseUrl(configStore.config.meowToolUrl)
   }
 }
@@ -131,6 +140,7 @@ function onSettingsSaved() {
       v-if="showChat && modelLoaded"
       :backend-ready="backendReady"
       :agent-id="agentId"
+      :system-prompt="systemPrompt"
     />
     <Settings
       v-model:visible="showSettings"

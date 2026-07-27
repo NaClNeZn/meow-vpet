@@ -5,6 +5,7 @@ import { createSession, streamChat, type ChatMessage } from '../api/client'
 const props = defineProps<{
   backendReady: boolean
   agentId?: string
+  systemPrompt?: string
 }>()
 
 interface UIMessage {
@@ -63,9 +64,17 @@ async function send() {
   scrollToBottom()
 
   // 构造发送给后端的 messages(只发 user/assistant,不含 streaming 标记)
-  const chatMessages: ChatMessage[] = messages.value
-    .filter((m) => m.content.length > 0)
-    .map((m) => ({ role: m.role, content: m.content }))
+  // 若配置了 systemPrompt,在数组开头 prepend 一条 system 消息
+  const chatMessages: ChatMessage[] = []
+  const sysPrompt = props.systemPrompt?.trim()
+  if (sysPrompt) {
+    chatMessages.push({ role: 'system', content: sysPrompt })
+  }
+  for (const m of messages.value) {
+    if (m.content.length > 0) {
+      chatMessages.push({ role: m.role, content: m.content })
+    }
+  }
 
   await streamChat({
     messages: chatMessages,

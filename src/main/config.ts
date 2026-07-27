@@ -8,6 +8,8 @@ const configSchema = z.object({
   meowToolUrl: z.string().default('http://localhost:4399'),
   live2dModelPath: z.string().default('/models/shizuku/shizuku.model.json'),
   agentId: z.string().optional(),
+  // 系统提示词(每次对话会作为 system 消息 prepend 到 messages 数组开头)
+  systemPrompt: z.string().optional(),
   windowX: z.number().optional(),
   windowY: z.number().optional(),
   windowScale: z.number().default(0.3)

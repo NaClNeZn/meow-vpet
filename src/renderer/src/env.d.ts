@@ -4,6 +4,7 @@ interface MeowVpetConfig {
   meowToolUrl: string
   live2dModelPath: string
   agentId?: string
+  systemPrompt?: string
   windowX?: number
   windowY?: number
   windowScale: number
