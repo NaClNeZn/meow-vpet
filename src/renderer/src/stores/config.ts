@@ -8,7 +8,8 @@ interface MeowVpetConfig {
   systemPrompt?: string
   windowX?: number
   windowY?: number
-  windowScale: number
+  windowSizeScale: number
+  modelScale: number
 }
 
 export const useConfigStore = defineStore('config', () => {

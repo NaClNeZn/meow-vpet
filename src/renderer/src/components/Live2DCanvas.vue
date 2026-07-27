@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, onBeforeUnmount, ref } from 'vue'
+import { onMounted, onBeforeUnmount, ref, watch } from 'vue'
 import * as PIXI from 'pixi.js'
 // 使用 index 入口同时支持 Cubism 2 和 Cubism 4 模型
 // 需要在 index.html 中同时加载 live2d.min.js (Cubism 2) 和 live2dcubismcore.min.js (Cubism 4)
@@ -17,6 +17,9 @@ const { Point } = PIXI
 
 const props = defineProps<{
   modelPath?: string
+  // 模型尺寸缩放系数(基于 fitScale 的乘数,1.0 = 自适应铺满窗口 80%)
+  // watch 此值变化即时重应用 scale,实现设置页实时调节
+  modelScale?: number
 }>()
 
 const emit = defineEmits<{
@@ -43,7 +46,7 @@ let isDragging = false
 let pressTimer: number | null = null
 let pressRafId = 0 // rAF 动画句柄,驱动长按进度条 0→1
 let pressStartTime = 0 // 长按起始时间戳,用于计算进度
-const LONG_PRESS_MS = 3000 // 长按阈值:3 秒,避免误触发拖拽
+const LONG_PRESS_MS = 3000 // 长按阈值:3 秒,避免误触发
 
 // const MODEL_PATH = props.modelPath || '/models/shizuku/shizuku.model.json'
 const MODEL_PATH = props.modelPath || '/models/Mao/Mao.model3.json'
@@ -51,6 +54,44 @@ const MIN_SCALE = 0.05
 const MAX_SCALE = 2.0
 // 模型在窗口中占据的比例(宽度和高度都按 80% 计算)
 const FIT_RATIO = 0.8
+
+// 模型自适应缩放基准值:让模型在窗口内占据 FIT_RATIO 比例
+// 实际 scale = fitScale * props.modelScale
+// 由 applyModelScale() 在模型加载完成、窗口尺寸变化、props.modelScale 变化时调用
+let fitScale = 1.0
+
+// 根据模型原始尺寸和当前 PIXI 画布尺寸重算 fitScale
+// 取宽高方向较小值,确保模型完整显示在窗口内
+function recomputeFitScale() {
+  if (!model || !app) return
+  const modelWidth = (model as any).internalModel?.width || model.width
+  const modelHeight = (model as any).internalModel?.height || model.height
+  if (!modelWidth || !modelHeight) return
+  const scaleX = (app.screen.width * FIT_RATIO) / modelWidth
+  const scaleY = (app.screen.height * FIT_RATIO) / modelHeight
+  fitScale = Math.min(scaleX, scaleY)
+}
+
+// 应用当前 modelScale:fitScale × props.modelScale,clamp 到 [MIN_SCALE, MAX_SCALE]
+// 同步更新 model.scale 并保持模型居中(anchor 0.5,0.5 已设置,position 在屏幕中心)
+function applyModelScale() {
+  if (!model || !app) return
+  const userScale = props.modelScale ?? 1.0
+  const finalScale = Math.max(
+    MIN_SCALE,
+    Math.min(MAX_SCALE, fitScale * userScale)
+  )
+  model.scale.set(finalScale)
+  // 锚点 0.5 + 居中 position 已设,缩放围绕中心点,无需重新定位
+}
+
+// 监听 props.modelScale 变化:设置页 slider 实时调节时立即重应用 scale
+watch(
+  () => props.modelScale,
+  () => {
+    applyModelScale()
+  }
+)
 
 // 判断屏幕坐标是否命中模型(用于拖拽前确认按在模型上)
 function isPointOnModel(clientX: number, clientY: number): boolean {
@@ -146,7 +187,9 @@ function handleGlobalMouse(pos: { x: number; y: number }) {
   model.focus(pos.x, pos.y)
 }
 
-// 滚轮缩放
+// 滚轮缩放:直接改 modelScale prop(通过 emit 或 store 更新)
+// 当前实现为本地直接修改 scale,不影响 props.modelScale。
+// 设计选择:滚轮作为"临时浏览"操作,不持久化;设置页 slider 才是持久化途径
 function handleWheel(event: WheelEvent) {
   if (!model) return
   event.preventDefault()
@@ -173,11 +216,20 @@ onMounted(async () => {
   // v7 中画布通过 app.view 获取(ICanvas 类型,需要转换为 HTMLCanvasElement 挂载到 DOM)
   containerRef.value.appendChild(app.view as unknown as HTMLCanvasElement)
 
-  // 监听容器大小变化,调整画布尺寸
+  // 监听容器大小变化,调整画布尺寸 + 重算 fitScale 并应用
+  // 窗口尺寸变化(主进程 setSize → CSS 100% 跟随)时触发,模型需重新自适应
   const resize = () => {
     if (!app || !containerRef.value) return
     const { width, height } = containerRef.value.getBoundingClientRect()
     app.renderer.resize(width, height)
+    // 窗口尺寸变了,fitScale 需要重算并应用
+    if (model) {
+      recomputeFitScale()
+      applyModelScale()
+      // 保持模型居中
+      model.x = app.screen.width / 2
+      model.y = app.screen.height / 2
+    }
   }
   resize()
   resizeObserver = new ResizeObserver(resize)
@@ -191,16 +243,12 @@ onMounted(async () => {
     app.stage.addChild(model as any)
 
     // 居中 + 自适应缩放:让模型占据窗口的 FIT_RATIO 比例
-    // 根据模型原始尺寸和窗口尺寸计算缩放,取宽高方向较小值确保完整显示
-    const modelWidth = (model as any).internalModel?.width || model.width
-    const modelHeight = (model as any).internalModel?.height || model.height
-    const scaleX = (app.screen.width * FIT_RATIO) / modelWidth
-    const scaleY = (app.screen.height * FIT_RATIO) / modelHeight
-    const fitScale = Math.min(scaleX, scaleY)
-    model.scale.set(fitScale)
+    // 实际 scale = fitScale × props.modelScale(用户调节系数)
     model.anchor.set(0.5, 0.5)
     model.x = app.screen.width / 2
     model.y = app.screen.height / 2
+    recomputeFitScale()
+    applyModelScale()
 
     // 点击交互:启用模型的 autoInteract,它会自动监听 pointertap 事件
     // pixi-live2d-display 内部通过 on('pointertap') 处理命中检测和坐标转换,

@@ -13,9 +13,11 @@ const modelLoaded = ref(false)
 const backendStatus = ref<string>('starting')
 const showChat = ref(false)
 const showSettings = ref(false)
-// 从配置读取 agentId / systemPrompt
+// 从配置读取 agentId / systemPrompt / modelScale
 const agentId = ref<string | undefined>(undefined)
 const systemPrompt = ref<string | undefined>(undefined)
+// 模型缩放系数(基于 fitScale 的乘数),传给 Live2DCanvas
+const modelScale = ref<number>(1.0)
 
 const backendReady = computed(() => backendStatus.value === 'ready')
 
@@ -55,6 +57,7 @@ onMounted(async () => {
   if (configStore.config) {
     agentId.value = configStore.config.agentId
     systemPrompt.value = configStore.config.systemPrompt
+    modelScale.value = configStore.config.modelScale ?? 1.0
     // 同步后端地址到 API 客户端
     setBaseUrl(configStore.config.meowToolUrl)
   } else if (!window.app) {
@@ -76,6 +79,12 @@ watch(
     systemPrompt.value = val
   }
 )
+
+// 设置页 slider 实时拖动时直接更新 modelScale ref(不经过 configStore,避免 Pinia ref
+// 属性突变不触发 watch 的问题)→ 立即传给 Live2DCanvas prop → watch 触发 applyModelScale
+function onModelScaleChange(scale: number) {
+  modelScale.value = scale
+}
 
 function updateStatus() {
   const map: Record<string, string> = {
@@ -112,11 +121,12 @@ function toggleChat() {
   showChat.value = !showChat.value
 }
 
-// 设置面板保存后刷新 agentId / systemPrompt 和后端地址
+// 设置面板保存后刷新 agentId / systemPrompt / modelScale 和后端地址
 function onSettingsSaved() {
   if (configStore.config) {
     agentId.value = configStore.config.agentId
     systemPrompt.value = configStore.config.systemPrompt
+    modelScale.value = configStore.config.modelScale ?? 1.0
     setBaseUrl(configStore.config.meowToolUrl)
   }
 }
@@ -125,6 +135,7 @@ function onSettingsSaved() {
 <template>
   <div class="app">
     <Live2DCanvas
+      :model-scale="modelScale"
       @model-loaded="onModelLoaded"
       @pointer-move="onPointerMove"
     />
@@ -145,16 +156,17 @@ function onSettingsSaved() {
     <Settings
       v-model:visible="showSettings"
       @saved="onSettingsSaved"
+      @model-scale-change="onModelScaleChange"
     />
   </div>
 </template>
 
 <style scoped>
 .app {
-  /* 固定 px 尺寸,与主进程窗口 360x480 一致(不用 100vw/100vh,
-     透明窗口下 vw/vh 有亚像素抖动会导致绝对定位元素漂移) */
-  width: 360px;
-  height: 480px;
+  /* 100% 适配窗口尺寸:由主进程 BrowserWindow.setSize 控制
+     不用 100vw/100vh(透明窗口下亚像素抖动),100% 解析父级整数像素稳定 */
+  width: 100%;
+  height: 100%;
   background: transparent;
   position: relative;
   font-family: system-ui, -apple-system, sans-serif;

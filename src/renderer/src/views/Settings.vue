@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, watch, onMounted } from 'vue'
+import { ref, watch, onMounted, computed } from 'vue'
 import axios from 'axios'
 import { useConfigStore } from '../stores/config'
 
@@ -10,9 +10,16 @@ const props = defineProps<{
 const emit = defineEmits<{
   'update:visible': [value: boolean]
   saved: []
+  // 实时模型缩放变化:直接通知 App.vue 更新 modelScale ref,不经过 configStore
+  // (Pinia setup store 中 ref 属性突变不一定触发 watch,改用 emit 保证可靠传播)
+  'model-scale-change': [scale: number]
 }>()
 
 const configStore = useConfigStore()
+
+// 基础窗口尺寸(与主进程 BASE_WINDOW_W/H 一致),仅用于 slider 显示像素值
+const BASE_W = 360
+const BASE_H = 480
 
 // 表单数据
 const formData = ref({
@@ -20,6 +27,26 @@ const formData = ref({
   live2dModelPath: '/models/shizuku/shizuku.model.json',
   agentId: '' as string,
   systemPrompt: '' as string
+})
+
+// 窗口尺寸缩放系数(独立于 formData,因为它需要实时反馈到主进程)
+// slider 实时拖动 → 立即调用 IPC setSize,同时防抖保存到 config
+const windowSizeScale = ref<number>(1.0)
+// 模型尺寸缩放系数(实时反馈到 Live2DCanvas)
+const modelScale = ref<number>(1.0)
+
+// 防抖保存 scale 的 timer
+let windowScaleSaveTimer: number | null = null
+let modelScaleSaveTimer: number | null = null
+
+// 像素尺寸显示(用于 slider 旁边的 caption)
+const windowPixelText = computed(() => {
+  const w = Math.round(BASE_W * windowSizeScale.value)
+  const h = Math.round(BASE_H * windowSizeScale.value)
+  return `${w} × ${h}`
+})
+const modelScaleText = computed(() => {
+  return `${Math.round(modelScale.value * 100)}%`
 })
 
 // agent 列表
@@ -83,13 +110,44 @@ async function toggleSkill(skill: { id: string; name?: string; enabled: boolean 
   }
 }
 
-// 保存配置
+// 实时调整窗口尺寸:slider input 事件
+// 1. 立即调用 IPC setSize → 主进程 win.setSize,窗口尺寸即时变化
+// 2. 防抖 500ms 保存到 config(避免高频写文件)
+function onWindowScaleInput() {
+  if (window.app) {
+    window.app.setWindowSize(windowSizeScale.value)
+  }
+  // 同步到 configStore 内存值(让 App.vue 的 watch 立即响应)
+  if (configStore.config) {
+    configStore.config.windowSizeScale = windowSizeScale.value
+  }
+  if (windowScaleSaveTimer) window.clearTimeout(windowScaleSaveTimer)
+  windowScaleSaveTimer = window.setTimeout(() => {
+    configStore.save({ windowSizeScale: windowSizeScale.value })
+  }, 500)
+}
+
+// 实时调整模型尺寸:slider input 事件
+// 直接 emit 给 App.vue 更新 modelScale ref → 传给 Live2DCanvas prop → watch 触发 applyModelScale
+// 不走 configStore.config.modelScale 突变(Pinia ref 属性突变不保证触发 watch)
+function onModelScaleInput() {
+  emit('model-scale-change', modelScale.value)
+  if (modelScaleSaveTimer) window.clearTimeout(modelScaleSaveTimer)
+  modelScaleSaveTimer = window.setTimeout(() => {
+    configStore.save({ modelScale: modelScale.value })
+  }, 500)
+}
+
+// 保存配置(其余文本字段)
 async function handleSave() {
   await configStore.save({
     meowToolUrl: formData.value.meowToolUrl,
     live2dModelPath: formData.value.live2dModelPath,
     agentId: formData.value.agentId || undefined,
-    systemPrompt: formData.value.systemPrompt.trim() || undefined
+    systemPrompt: formData.value.systemPrompt.trim() || undefined,
+    // slider 已经在 onInput 时防抖保存过,这里再 save 一次兜底
+    windowSizeScale: windowSizeScale.value,
+    modelScale: modelScale.value
   })
   showToast('配置已保存')
   emit('saved')
@@ -115,6 +173,8 @@ watch(
         formData.value.live2dModelPath = configStore.config.live2dModelPath
         formData.value.agentId = configStore.config.agentId || ''
         formData.value.systemPrompt = configStore.config.systemPrompt || ''
+        windowSizeScale.value = configStore.config.windowSizeScale ?? 1.0
+        modelScale.value = configStore.config.modelScale ?? 1.0
       }
       loading.value = true
       await Promise.all([loadAgents(), loadSkills()])
@@ -131,6 +191,8 @@ onMounted(async () => {
     formData.value.live2dModelPath = configStore.config.live2dModelPath
     formData.value.agentId = configStore.config.agentId || ''
     formData.value.systemPrompt = configStore.config.systemPrompt || ''
+    windowSizeScale.value = configStore.config.windowSizeScale ?? 1.0
+    modelScale.value = configStore.config.modelScale ?? 1.0
   }
 })
 </script>
@@ -201,6 +263,47 @@ onMounted(async () => {
                   <path d="m6 9 6 6 6-6"/>
                 </svg>
               </div>
+            </div>
+          </section>
+
+          <section class="form-section">
+            <div class="section-title">
+              <span>显示</span>
+              <span class="section-hint-inline">实时预览</span>
+            </div>
+            <div class="form-row">
+              <div class="slider-row">
+                <label class="form-label" for="windowSizeScale">窗口大小</label>
+                <span class="slider-value">{{ windowPixelText }}</span>
+              </div>
+              <input
+                id="windowSizeScale"
+                v-model.number="windowSizeScale"
+                class="slider"
+                type="range"
+                min="0.8"
+                max="2.0"
+                step="0.05"
+                @input="onWindowScaleInput"
+              />
+              <p class="form-hint">拖动即时调整窗口尺寸,松开自动保存</p>
+            </div>
+            <div class="form-row">
+              <div class="slider-row">
+                <label class="form-label" for="modelScale">模型大小</label>
+                <span class="slider-value">{{ modelScaleText }}</span>
+              </div>
+              <input
+                id="modelScale"
+                v-model.number="modelScale"
+                class="slider"
+                type="range"
+                min="0.3"
+                max="2.0"
+                step="0.05"
+                @input="onModelScaleInput"
+              />
+              <p class="form-hint">基于自适应尺寸的乘数,1.0 = 铺满窗口 80%</p>
             </div>
           </section>
 
@@ -459,6 +562,66 @@ onMounted(async () => {
 .textarea:focus {
   border-color: oklch(var(--ring));
   box-shadow: 0 0 0 3px oklch(var(--ring) / 0.12);
+}
+
+/* ===== Slider(meow-tool input 风格 range 控件)===== */
+.slider-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.slider-value {
+  font-size: 11px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  color: oklch(var(--foreground));
+  background: oklch(var(--secondary));
+  padding: 2px 8px;
+  border-radius: 4px;
+  min-width: 56px;
+  text-align: center;
+}
+.slider {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 4px;
+  background: oklch(var(--border));
+  border-radius: 9999px;
+  outline: none;
+  cursor: pointer;
+  margin: 4px 0 0;
+}
+.slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: oklch(var(--primary));
+  border: 2px solid oklch(var(--background));
+  box-shadow: 0 1px 3px oklch(0 0 0 / 0.2);
+  cursor: pointer;
+  transition: transform var(--duration-fast) var(--ease-spring),
+    box-shadow var(--duration-fast) var(--ease-smooth);
+}
+.slider::-webkit-slider-thumb:hover {
+  transform: scale(1.15);
+  box-shadow: 0 0 0 5px oklch(var(--ring) / 0.15);
+}
+.slider::-webkit-slider-thumb:active {
+  transform: scale(1.05);
+  box-shadow: 0 0 0 7px oklch(var(--ring) / 0.2);
+}
+.slider::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: oklch(var(--primary));
+  border: 2px solid oklch(var(--background));
+  box-shadow: 0 1px 3px oklch(0 0 0 / 0.2);
+  cursor: pointer;
 }
 
 /* ===== 下拉选择 ===== */

@@ -4,9 +4,11 @@ import App from './App.vue'
 
 // 全局样式:消除 html/body 默认 margin 和滚动条,
 // 让窗口内容严格限制在窗口尺寸内(透明窗口不应出现滚动条)
-// 注意:必须用固定 px 而非 100vw/100vh。透明窗口在 DPI 缩放下 100vw 会有亚像素
+// 注意:必须用 100% 而非 100vw/100vh。透明窗口在 DPI 缩放下 100vw 会有亚像素
 // 抖动,导致 position:absolute + right:8px 的按钮基准变化,产生视觉漂移。
-// 360x480 与主进程 WINDOW_W/WINDOW_H 保持一致
+// 100% 解析为父级整数像素,在 setSize 后稳定无抖动。
+// 实际窗口尺寸由主进程根据 config.windowSizeScale 决定(BrowserWindow.setSize),
+// 此处 100% 自适应,Live2DCanvas 的 ResizeObserver 会跟随重算 PIXI 画布。
 //
 // 同时注入 meow-tool 同款 shadcn 主题变量(oklch 色彩空间)+ Element Plus 主题覆盖,
 // 让 Settings 等面板视觉与 meow-tool web 控制台保持一致。
@@ -15,14 +17,14 @@ style.textContent = `
   html, body {
     margin: 0;
     padding: 0;
-    width: 360px;
-    height: 480px;
+    width: 100%;
+    height: 100%;
     overflow: hidden;
     background: transparent;
   }
   #app {
-    width: 360px;
-    height: 480px;
+    width: 100%;
+    height: 100%;
     overflow: hidden;
   }
 

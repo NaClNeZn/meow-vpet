@@ -7,7 +7,8 @@ interface MeowVpetConfig {
   systemPrompt?: string
   windowX?: number
   windowY?: number
-  windowScale: number
+  windowSizeScale: number
+  modelScale: number
 }
 
 declare interface Window {
@@ -24,5 +25,7 @@ declare interface Window {
     getConfig: () => Promise<MeowVpetConfig>
     saveConfig: (config: Partial<MeowVpetConfig>) => Promise<MeowVpetConfig>
     onOpenSettings: (callback: () => void) => void
+    // 实时调整窗口尺寸:scale 为 0.5-2.0 的乘数,基于 360x480
+    setWindowSize: (scale: number) => Promise<void>
   }
 }

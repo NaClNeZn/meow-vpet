@@ -12,7 +12,13 @@ const configSchema = z.object({
   systemPrompt: z.string().optional(),
   windowX: z.number().optional(),
   windowY: z.number().optional(),
-  windowScale: z.number().default(0.3)
+  // 窗口尺寸缩放系数(基于 360x480 的乘数,1.0 = 默认尺寸)
+  // 设置页实时调节时会通过 IPC 通知主进程 setSize
+  // 最小 0.8(80% = 288x384 px),过小会导致 Live2D 模型细节不可辨识
+  windowSizeScale: z.number().min(0.8).max(2.0).default(1.0),
+  // 模型尺寸缩放系数(基于 fitScale 的乘数,1.0 = 自适应铺满窗口 80%)
+  // 渲染层 Live2DCanvas watch 此值变化后即时重应用 scale
+  modelScale: z.number().min(0.3).max(2.0).default(1.0)
 })
 
 // 配置类型

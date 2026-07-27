@@ -10,6 +10,16 @@ let isQuitting = false
 // 拖拽结束时由 stopDrag 保存一次最终位置
 let isDragging = false
 
+// 窗口基础尺寸(所有 windowSizeScale 乘数都基于此)
+// 渲染层 main.ts 与 App.vue 的 CSS 也以此为基础
+const BASE_WINDOW_W = 360
+const BASE_WINDOW_H = 480
+
+// 当前窗口尺寸(初始化时从 config.windowSizeScale 计算,设置页调整时通过 setSize 更新)
+// 拖拽边界 clamp、全局鼠标跟踪等所有依赖窗口尺寸的逻辑都使用此动态值
+let currentWindowW = BASE_WINDOW_W
+let currentWindowH = BASE_WINDOW_H
+
 // 当前后端状态(供渲染进程主动查询,避免 IPC 事件在页面加载前丢失)
 let currentBackendStatus = 'starting'
 
@@ -24,17 +34,34 @@ export function getMainWindow(): BrowserWindow | null {
   return mainWindow
 }
 
+// 根据 windowSizeScale 计算实际窗口尺寸并更新 currentWindowW/H
+function applyWindowScale(scale: number): { w: number; h: number } {
+  const clamped = Math.max(0.8, Math.min(2.0, scale))
+  currentWindowW = Math.round(BASE_WINDOW_W * clamped)
+  currentWindowH = Math.round(BASE_WINDOW_H * clamped)
+  return { w: currentWindowW, h: currentWindowH }
+}
+
 // 创建应用主窗口
 function createWindow(): BrowserWindow {
+  // 启动时从配置读取窗口缩放系数
+  const config = loadConfig()
+  const { w, h } = applyWindowScale(config.windowSizeScale ?? 1.0)
+
   mainWindow = new BrowserWindow({
-    width: 360,
-    height: 480,
+    width: w,
+    height: h,
     transparent: true, // 透明背景,用于显示桌宠
-    frame: false, // 无边框
+    frame: false, // 无边框(无边框即无拖拽调整手柄,用户无法手动 resize)
     alwaysOnTop: true, // 始终置顶
     skipTaskbar: true, // 不在任务栏显示
-    resizable: false, // 禁止调整大小
-    maximizable: false, // 禁止最大化
+    // resizable 必须为 true!
+    // Electron 在 Windows 上有已知 bug:frameless + transparent + resizable:false 时,
+    // win.setSize() 仅第一次生效,后续调用被静默忽略。
+    // 保持 resizable:true 让 setSize 反复生效;Aero Snap / 手动 resize 的副作用
+    // 通过下方的 'resize' 事件处理器回退 —— 只要窗口尺寸与 currentWindowW/H 不一致就立即还原。
+    resizable: true,
+    maximizable: false, // 禁止双击标题栏最大化(frameless 下也无标题栏,兜底防御)
     hasShadow: false, // 透明窗口不要阴影
     backgroundColor: '#00000000',
     webPreferences: {
@@ -58,6 +85,18 @@ function createWindow(): BrowserWindow {
     return { action: 'deny' }
   })
 
+  // 防御 Aero Snap / 手动拖拽 resize:窗口尺寸一旦偏离 currentWindowW/H 就立即回退
+  // resizable:true 启用了 Aero Snap(拖到屏幕边缘自动 snap 为半屏),但我们需要它来
+  // 让 setSize 反复生效。此处用 resize 事件监听器兜底:无论来源(Aero Snap / Win+方向键 /
+  // 手动拖边框),只要尺寸与预期不符就立即 setSize 回去,用户视觉上几乎感知不到。
+  mainWindow.on('resize', () => {
+    if (!mainWindow) return
+    const [w, h] = mainWindow.getSize()
+    if (w !== currentWindowW || h !== currentWindowH) {
+      mainWindow.setSize(currentWindowW, currentWindowH)
+    }
+  })
+
   // 窗口右键菜单
   mainWindow.webContents.on('context-menu', () => {
     const menu = Menu.buildFromTemplate([
@@ -78,11 +117,9 @@ function createWindow(): BrowserWindow {
 
   // 应用持久化的窗口位置,并校验是否在屏幕可见区域内
   // 防止上次拖拽飞出屏幕后,持久化了不可见的位置导致窗口"消失"
-  const config = loadConfig()
   if (config.windowX !== undefined && config.windowY !== undefined) {
-    const [w, h] = mainWindow.getSize()
     // 找到该点所在显示器,若点不在任何显示器内则回退到主屏
-    let display = screen.getDisplayMatching({ x: config.windowX, y: config.windowY, width: w, height: h })
+    let display = screen.getDisplayMatching({ x: config.windowX, y: config.windowY, width: currentWindowW, height: currentWindowH })
     if (!display || display.bounds.width === 0) {
       display = screen.getPrimaryDisplay()
     }
@@ -90,11 +127,11 @@ function createWindow(): BrowserWindow {
     // 窗口中心必须在工作区内,确保角色(居中显示)始终可见
     const clampedX = Math.max(
       workArea.x,
-      Math.min(workArea.x + workArea.width - w, config.windowX)
+      Math.min(workArea.x + workArea.width - currentWindowW, config.windowX)
     )
     const clampedY = Math.max(
       workArea.y,
-      Math.min(workArea.y + workArea.height - h, config.windowY)
+      Math.min(workArea.y + workArea.height - currentWindowH, config.windowY)
     )
     mainWindow.setPosition(Math.round(clampedX), Math.round(clampedY))
   }
@@ -105,8 +142,6 @@ function createWindow(): BrowserWindow {
   // 拖拽中完全跳过:拖拽循环已用 dragBounds clamp,此处二次 setPosition 会与
   // 拖拽循环交错(setPosition 同步返回但 move 事件异步触发,clamping 标志无效),
   // 在透明窗口下产生闪烁。拖拽结束由 stopDrag 保存最终位置。
-  const WINDOW_W = 360
-  const WINDOW_H = 480
   let savePositionTimer: NodeJS.Timeout | null = null
   let clamping = false // 防止 setPosition 触发 move 递归
   let lastSavedPos = { x: 0, y: 0 }
@@ -117,10 +152,10 @@ function createWindow(): BrowserWindow {
     const [x, y] = mainWindow.getPosition()
     // 边界 clamp(仅非拖拽场景:程序 setPosition、外部 move 等)
     if (!clamping) {
-      const display = screen.getDisplayMatching({ x, y, width: WINDOW_W, height: WINDOW_H })
+      const display = screen.getDisplayMatching({ x, y, width: currentWindowW, height: currentWindowH })
       const wa = display.workArea
-      const maxX = wa.x + wa.width - WINDOW_W
-      const maxY = wa.y + wa.height - WINDOW_H
+      const maxX = wa.x + wa.width - currentWindowW
+      const maxY = wa.y + wa.height - currentWindowH
       const newX = Math.max(wa.x, Math.min(maxX, x))
       const newY = Math.max(wa.y, Math.min(maxY, y))
       if (newX !== x || newY !== y) {
@@ -197,14 +232,25 @@ function registerIpcHandlers(): void {
     win.setIgnoreMouseEvents(ignore)
   })
 
+  // 实时调整窗口尺寸:设置页 slider 拖动时频繁调用
+  // 1. 根据 scale 计算 newW/newH 并更新 currentWindowW/H(供 drag/tracking/resize 回退使用)
+  // 2. 调用 win.setSize 即时改变窗口尺寸(resizable:true,无需 toggle)
+  // 3. Aero Snap 副作用由 mainWindow.on('resize') 事件处理器兜底回退
+  // 4. 不在此处 saveConfig —— 渲染层 slider 抬起时会防抖保存,避免高频写文件 EPERM
+  // 5. setSize 后窗口可能超出屏幕,触发 move 事件中的 clamp 兜底校正
+  ipcMain.handle('window:setSize', (_event, scale: number) => {
+    const win = getMainWindow()
+    if (!win) return
+    const { w, h } = applyWindowScale(scale)
+    win.setSize(w, h)
+  })
+
   // 窗口拖拽:主进程轮询 screen.getCursorScreenPoint,用绝对定位法移动窗口
   // 关键点(避免方向反转):
   // 1. 拖拽开始时一次性记录起点 cursor 和起点 window 位置
   // 2. 每帧只读 cursor,用 (当前cursor - 起点cursor) 计算窗口绝对新位置
   // 3. 全程不调用 getPosition()/getSize(),避免透明窗口 DPI 缩放下坐标系不一致
-  // 4. 用固定窗口尺寸 360x480 计算边界,不用 getSize()
-  const WINDOW_W = 360
-  const WINDOW_H = 480
+  // 4. 用当前窗口尺寸(currentWindowW/H,由 windowSizeScale 决定)计算边界
   let dragInterval: NodeJS.Timeout | null = null
   let dragStartCursor: { x: number; y: number } | null = null
   let dragStartWindow: { x: number; y: number } | null = null
@@ -229,13 +275,13 @@ function registerIpcHandlers(): void {
     const [x, y] = win.getPosition()
     dragStartWindow = { x, y }
     // 一次性确定边界(用窗口当前所在显示器的工作区)
-    const display = screen.getDisplayMatching({ x, y, width: WINDOW_W, height: WINDOW_H })
+    const display = screen.getDisplayMatching({ x, y, width: currentWindowW, height: currentWindowH })
     const wa = display.workArea
     dragBounds = {
       minX: wa.x,
-      maxX: wa.x + wa.width - WINDOW_W,
+      maxX: wa.x + wa.width - currentWindowW,
       minY: wa.y,
-      maxY: wa.y + wa.height - WINDOW_H
+      maxY: wa.y + wa.height - currentWindowH
     }
     if (dragInterval) clearInterval(dragInterval)
     // 60fps 轮询 cursor,用绝对位移计算窗口新位置
@@ -312,8 +358,8 @@ function registerIpcHandlers(): void {
       const display = screen.getDisplayMatching({
         x: winX,
         y: winY,
-        width: WINDOW_W,
-        height: WINDOW_H
+        width: currentWindowW,
+        height: currentWindowH
       })
       const scaleFactor = display.scaleFactor || 1
       // 物理像素差 -> CSS 像素(与 renderer 中 clientX/clientY 量纲一致)

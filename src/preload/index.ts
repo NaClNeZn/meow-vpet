@@ -10,6 +10,8 @@ const api = {
   // 启动/停止窗口拖拽(主进程轮询鼠标坐标,避免渲染层 screenX/Y 不可靠)
   startWindowDrag: () => ipcRenderer.invoke('window:startDrag'),
   stopWindowDrag: () => ipcRenderer.invoke('window:stopDrag'),
+  // 实时调整窗口尺寸:scale 为 0.5-2.0 的乘数,基于 360x480
+  setWindowSize: (scale: number) => ipcRenderer.invoke('window:setSize', scale),
   // 启动/停止全局鼠标跟踪(用于桌宠在窗口外也能跟随鼠标方向)
   // 主进程 30fps 轮询 screen.getCursorScreenPoint,转换为窗口内 CSS 像素后推送
   startMouseTracking: () => ipcRenderer.invoke('window:startMouseTracking'),
