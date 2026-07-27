@@ -16,6 +16,8 @@ Live2DModel.registerTicker(PIXI.Ticker as any)
 const { Point } = PIXI
 
 const props = defineProps<{
+  // 模型路径:相对 ~/.meow-vpet/ 的路径,例如 "models/Mao/Mao.model3.json"
+  // 通过 IPC models:resolve-url 解析为 file:// URL 后加载
   modelPath?: string
   // 模型尺寸缩放系数(基于 fitScale 的乘数,1.0 = 自适应铺满窗口 80%)
   // watch 此值变化即时重应用 scale,实现设置页实时调节
@@ -48,8 +50,6 @@ let pressRafId = 0 // rAF 动画句柄,驱动长按进度条 0→1
 let pressStartTime = 0 // 长按起始时间戳,用于计算进度
 const LONG_PRESS_MS = 3000 // 长按阈值:3 秒,避免误触发
 
-// const MODEL_PATH = props.modelPath || '/models/shizuku/shizuku.model.json'
-const MODEL_PATH = props.modelPath || '/models/Mao/Mao.model3.json'
 const MIN_SCALE = 0.05
 const MAX_SCALE = 2.0
 // 模型在窗口中占据的比例(宽度和高度都按 80% 计算)
@@ -90,6 +90,97 @@ watch(
   () => props.modelScale,
   () => {
     applyModelScale()
+  }
+)
+
+// 销毁当前已加载的模型(切换模型前调用)
+// 保留 PIXI app、resizeObserver、事件监听器,只重置 model
+function destroyCurrentModel() {
+  if (model) {
+    try {
+      model.destroy()
+    } catch (err) {
+      console.warn('[Live2DCanvas] 销毁旧模型失败:', err)
+    }
+    model = null
+  }
+}
+
+// 模型加载任务 token:每次开始加载递增,加载完成后校验 token
+// 若 token 不匹配说明期间又触发了新的加载,本次结果作废,直接销毁
+// 防止快速切换模型时多个 Live2DModel.from() 并发返回导致 stage 上残留多个模型
+let loadToken = 0
+
+// 加载 Live2D 模型
+// 1. 通过 IPC 将相对路径解析为 file:// URL
+// 2. Live2DModel.from() 加载模型
+// 3. 居中 + 自适应缩放 + 启用点击交互
+// 切换模型时先 destroyCurrentModel() 再调用此函数
+async function loadModel(relPath: string): Promise<void> {
+  if (!app) return
+  // 本次加载的 token,加载完成后校验
+  const myToken = ++loadToken
+  // 通过主进程解析路径为 file:// URL
+  // 兼容旧配置(/models/... 开头)和相对路径
+  let modelUrl = relPath
+  if (window.app?.resolveModelUrl) {
+    try {
+      modelUrl = await window.app.resolveModelUrl(relPath)
+    } catch (err) {
+      console.warn('[Live2DCanvas] 解析模型路径失败,使用原值:', err)
+    }
+  }
+  if (!modelUrl) {
+    console.error('[Live2DCanvas] 模型路径为空,无法加载')
+    return
+  }
+
+  try {
+    const newModel = await Live2DModel.from(modelUrl)
+    // 加载期间又触发了新的加载任务,本次结果作废
+    if (myToken !== loadToken || !app) {
+      try {
+        newModel?.destroy()
+      } catch {
+        /* ignore */
+      }
+      return
+    }
+    model = newModel
+    // Live2DModel 类型与 pixi.js DisplayObject 存在轻微不兼容,使用 as any 规避
+    app.stage.addChild(model as any)
+
+    // 居中 + 自适应缩放:让模型占据窗口的 FIT_RATIO 比例
+    // 实际 scale = fitScale × props.modelScale(用户调节系数)
+    model.anchor.set(0.5, 0.5)
+    model.x = app.screen.width / 2
+    model.y = app.screen.height / 2
+    recomputeFitScale()
+    applyModelScale()
+
+    // 点击交互:启用模型的 autoInteract,它会自动监听 pointertap 事件
+    ;(model as any).autoInteract = true
+    model.on('hit', (hitAreas: string[]) => {
+      if (hitAreas.length > 0) {
+        emit('model-hit', 0, 0)
+      }
+    })
+
+    emit('model-loaded', model)
+  } catch (err) {
+    console.error('[Live2DCanvas] Live2D 模型加载失败:', err, 'url=', modelUrl)
+  }
+}
+
+// 监听 props.modelPath 变化:切换模型时销毁旧模型后加载新模型
+// 设置页选择不同模型 → configStore.save → App.vue watch → 传新 prop → 此处触发
+watch(
+  () => props.modelPath,
+  async (newPath, oldPath) => {
+    if (!newPath || newPath === oldPath) return
+    if (!app) return
+    destroyCurrentModel()
+    await loadModel(newPath)
   }
 )
 
@@ -235,35 +326,9 @@ onMounted(async () => {
   resizeObserver = new ResizeObserver(resize)
   resizeObserver.observe(containerRef.value)
 
-  // 加载 Live2D 模型
-  try {
-    model = await Live2DModel.from(MODEL_PATH)
-    if (!app || !model) return
-    // Live2DModel 类型与 pixi.js DisplayObject 存在轻微不兼容,使用 as any 规避
-    app.stage.addChild(model as any)
-
-    // 居中 + 自适应缩放:让模型占据窗口的 FIT_RATIO 比例
-    // 实际 scale = fitScale × props.modelScale(用户调节系数)
-    model.anchor.set(0.5, 0.5)
-    model.x = app.screen.width / 2
-    model.y = app.screen.height / 2
-    recomputeFitScale()
-    applyModelScale()
-
-    // 点击交互:启用模型的 autoInteract,它会自动监听 pointertap 事件
-    // pixi-live2d-display 内部通过 on('pointertap') 处理命中检测和坐标转换,
-    // 比手动调用 containsPoint 更稳健(后者在某些生命周期阶段 getBounds 可能返回 undefined)
-    ;(model as any).autoInteract = true
-    // model.tap 由 autoInteract 内部的 onTap 回调自动触发,会 emit('hit', hitAreaNames)
-    model.on('hit', (hitAreas: string[]) => {
-      if (hitAreas.length > 0) {
-        emit('model-hit', 0, 0)
-      }
-    })
-
-    emit('model-loaded', model)
-  } catch (err) {
-    console.error('Live2D 模型加载失败:', err)
+  // 加载 Live2D 模型(从 props.modelPath 读取,通过 IPC 解析为 file:// URL)
+  if (props.modelPath) {
+    await loadModel(props.modelPath)
   }
 
   // 注册全局事件
@@ -332,10 +397,9 @@ onBeforeUnmount(() => {
     window.app.stopMouseTracking()
   }
   resizeObserver?.disconnect()
-  model?.destroy()
+  destroyCurrentModel()
   app?.destroy(true)
   app = null
-  model = null
 })
 </script>
 

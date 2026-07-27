@@ -6,7 +6,9 @@ import { homedir } from 'os'
 // 配置 schema(zod 校验)
 const configSchema = z.object({
   meowToolUrl: z.string().default('http://localhost:4399'),
-  live2dModelPath: z.string().default('/models/shizuku/shizuku.model.json'),
+  // 模型路径:相对 ~/.meow-vpet/ 的路径,例如 "models/Mao/Mao.model3.json"
+  // 渲染层加载时通过 IPC models:resolve-url 转为 file:// URL
+  live2dModelPath: z.string().default('models/Mao/Mao.model3.json'),
   agentId: z.string().optional(),
   // 系统提示词(每次对话会作为 system 消息 prepend 到 messages 数组开头)
   systemPrompt: z.string().optional(),
@@ -20,6 +22,16 @@ const configSchema = z.object({
   // 渲染层 Live2DCanvas watch 此值变化后即时重应用 scale
   modelScale: z.number().min(0.3).max(2.0).default(1.0)
 })
+
+// 旧配置迁移:将 /models/... 形式的绝对路径转为 models/... 相对路径
+// 旧版本(<=0.1.0)使用 /models/... 从 dev server 或 extraResources 根加载,
+// 新版本统一从 ~/.meow-vpet/ 加载,需要去掉前导斜杠
+function migrateConfig(raw: Record<string, unknown>): Record<string, unknown> {
+  if (typeof raw.live2dModelPath === 'string' && raw.live2dModelPath.startsWith('/models/')) {
+    raw.live2dModelPath = raw.live2dModelPath.slice(1)
+  }
+  return raw
+}
 
 // 配置类型
 export type MeowVpetConfig = z.infer<typeof configSchema>
@@ -47,7 +59,9 @@ export function loadConfig(): MeowVpetConfig {
   try {
     const raw = readFileSync(path, 'utf-8')
     const parsed = JSON.parse(raw)
-    return configSchema.parse(parsed)
+    // 旧配置迁移:/models/... → models/...
+    const migrated = migrateConfig(parsed)
+    return configSchema.parse(migrated)
   } catch (err) {
     console.warn('[meow-vpet] 配置文件解析失败,使用默认值:', err)
     return configSchema.parse({})

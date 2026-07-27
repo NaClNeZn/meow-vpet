@@ -28,6 +28,15 @@ const api = {
   getConfig: () => ipcRenderer.invoke('config:get'),
   saveConfig: (config: Record<string, unknown>) =>
     ipcRenderer.invoke('config:save', config),
+  // 扫描可用模型列表(供设置页下拉)
+  // 返回 [{ name, path, format }],path 为相对 ~/.meow-vpet/ 的路径
+  listModels: () =>
+    ipcRenderer.invoke('models:list') as Promise<
+      Array<{ name: string; path: string; format: 'cubism4' | 'cubism2' }>
+    >,
+  // 将相对路径解析为可加载的 file:// URL
+  resolveModelUrl: (relPath: string) =>
+    ipcRenderer.invoke('models:resolve-url', relPath) as Promise<string>,
   // 监听打开设置菜单事件
   onOpenSettings: (callback: () => void) =>
     ipcRenderer.on('menu:open-settings', () => callback())

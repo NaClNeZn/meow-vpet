@@ -13,11 +13,14 @@ const modelLoaded = ref(false)
 const backendStatus = ref<string>('starting')
 const showChat = ref(false)
 const showSettings = ref(false)
-// 从配置读取 agentId / systemPrompt / modelScale
+// 从配置读取 agentId / systemPrompt / modelScale / modelPath
 const agentId = ref<string | undefined>(undefined)
 const systemPrompt = ref<string | undefined>(undefined)
 // 模型缩放系数(基于 fitScale 的乘数),传给 Live2DCanvas
 const modelScale = ref<number>(1.0)
+// 模型路径:相对 ~/.meow-vpet/ 的路径,例如 "models/Mao/Mao.model3.json"
+// 传给 Live2DCanvas,变化时由其内部 watch 触发重新加载模型
+const modelPath = ref<string | undefined>(undefined)
 
 const backendReady = computed(() => backendStatus.value === 'ready')
 
@@ -58,6 +61,7 @@ onMounted(async () => {
     agentId.value = configStore.config.agentId
     systemPrompt.value = configStore.config.systemPrompt
     modelScale.value = configStore.config.modelScale ?? 1.0
+    modelPath.value = configStore.config.live2dModelPath
     // 同步后端地址到 API 客户端
     setBaseUrl(configStore.config.meowToolUrl)
   } else if (!window.app) {
@@ -77,6 +81,13 @@ watch(
   () => configStore.config?.systemPrompt,
   (val) => {
     systemPrompt.value = val
+  }
+)
+// 配置变化时同步 modelPath(设置页切换模型后,Live2DCanvas watch 触发重新加载)
+watch(
+  () => configStore.config?.live2dModelPath,
+  (val) => {
+    modelPath.value = val
   }
 )
 
@@ -121,12 +132,13 @@ function toggleChat() {
   showChat.value = !showChat.value
 }
 
-// 设置面板保存后刷新 agentId / systemPrompt / modelScale 和后端地址
+// 设置面板保存后刷新 agentId / systemPrompt / modelScale / modelPath 和后端地址
 function onSettingsSaved() {
   if (configStore.config) {
     agentId.value = configStore.config.agentId
     systemPrompt.value = configStore.config.systemPrompt
     modelScale.value = configStore.config.modelScale ?? 1.0
+    modelPath.value = configStore.config.live2dModelPath
     setBaseUrl(configStore.config.meowToolUrl)
   }
 }
@@ -135,6 +147,7 @@ function onSettingsSaved() {
 <template>
   <div class="app">
     <Live2DCanvas
+      :model-path="modelPath"
       :model-scale="modelScale"
       @model-loaded="onModelLoaded"
       @pointer-move="onPointerMove"

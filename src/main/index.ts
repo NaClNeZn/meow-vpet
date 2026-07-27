@@ -3,6 +3,12 @@ import { join } from 'path'
 import { createTray, destroyTray } from './tray'
 import { startMeowTool, waitForMeowTool, stopMeowTool } from './meow-tool'
 import { loadConfig, saveConfig } from './config'
+import { ensureBuiltinModels, listAvailableModels, resolveModelUrl } from './models'
+import { registerModelScheme, registerModelProtocol } from './protocol'
+
+// 注册自定义 protocol scheme(必须在 app ready 之前)
+// meow-model:// 用于加载 ~/.meow-vpet/ 下的模型文件,绕过 file:// 在 dev 模式下的 CORS 限制
+registerModelScheme()
 
 let mainWindow: BrowserWindow | null = null
 let isQuitting = false
@@ -185,6 +191,11 @@ function createWindow(): BrowserWindow {
 
 // 应用就绪后创建窗口 + 注册 IPC + 创建托盘 + 启动后端
 app.whenReady().then(async () => {
+  // 注册 meow-model:// protocol handler(必须在 app ready 之后)
+  registerModelProtocol()
+  // 首次启动时将内置模型复制到 ~/.meow-vpet/models/
+  // 已存在的模型目录不覆盖,保留用户修改
+  ensureBuiltinModels()
   createWindow()
   registerIpcHandlers()
   createTray(getMainWindow)
@@ -393,6 +404,19 @@ function registerIpcHandlers(): void {
   // 渲染进程主动查询当前后端状态(页面加载后补齐错过的状态)
   ipcMain.handle('backend:getStatus', () => {
     return currentBackendStatus
+  })
+
+  // 扫描 ~/.meow-vpet/models/ 下的可用模型,供设置页下拉选择
+  // 返回 [{ name, path, format }],path 为相对 ~/.meow-vpet/ 的路径
+  ipcMain.handle('models:list', () => {
+    return listAvailableModels()
+  })
+
+  // 将相对路径解析为可加载的 file:// URL
+  // 兼容旧配置(/models/... 开头)和已经是 URL 的输入
+  ipcMain.handle('models:resolve-url', (_event, relPath: string) => {
+    if (typeof relPath !== 'string' || !relPath) return ''
+    return resolveModelUrl(relPath)
   })
 }
 

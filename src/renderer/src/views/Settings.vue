@@ -24,7 +24,7 @@ const BASE_H = 480
 // 表单数据
 const formData = ref({
   meowToolUrl: 'http://localhost:4399',
-  live2dModelPath: '/models/shizuku/shizuku.model.json',
+  live2dModelPath: 'models/Mao/Mao.model3.json',
   agentId: '' as string,
   systemPrompt: '' as string
 })
@@ -34,6 +34,10 @@ const formData = ref({
 const windowSizeScale = ref<number>(1.0)
 // 模型尺寸缩放系数(实时反馈到 Live2DCanvas)
 const modelScale = ref<number>(1.0)
+
+// 可用模型列表(从 ~/.meow-vpet/models/ 扫描)
+// 每项 { name, path, format },path 为相对 ~/.meow-vpet/ 的路径
+const availableModels = ref<Array<{ name: string; path: string; format: 'cubism4' | 'cubism2' }>>([])
 
 // 防抖保存 scale 的 timer
 let windowScaleSaveTimer: number | null = null
@@ -92,6 +96,21 @@ async function loadSkills() {
   } catch (err) {
     console.warn('加载 skill 列表失败:', err)
     skills.value = []
+  }
+}
+
+// 加载可用模型列表(从 ~/.meow-vpet/models/ 扫描)
+// 主进程递归查找 *.model3.json 和 *.model.json
+async function loadAvailableModels() {
+  if (!window.app?.listModels) {
+    availableModels.value = []
+    return
+  }
+  try {
+    availableModels.value = await window.app.listModels()
+  } catch (err) {
+    console.warn('加载模型列表失败:', err)
+    availableModels.value = []
   }
 }
 
@@ -177,7 +196,7 @@ watch(
         modelScale.value = configStore.config.modelScale ?? 1.0
       }
       loading.value = true
-      await Promise.all([loadAgents(), loadSkills()])
+      await Promise.all([loadAgents(), loadSkills(), loadAvailableModels()])
       loading.value = false
     }
   }
@@ -194,6 +213,8 @@ onMounted(async () => {
     windowSizeScale.value = configStore.config.windowSizeScale ?? 1.0
     modelScale.value = configStore.config.modelScale ?? 1.0
   }
+  // 预加载一次模型列表,首次打开设置时无需等待
+  await loadAvailableModels()
 })
 </script>
 
@@ -235,16 +256,26 @@ onMounted(async () => {
           <section class="form-section">
             <div class="section-title">Live2D</div>
             <div class="form-row">
-              <label class="form-label" for="live2dModelPath">模型路径</label>
-              <input
-                id="live2dModelPath"
-                v-model="formData.live2dModelPath"
-                class="input"
-                type="text"
-                placeholder="/models/shizuku/shizuku.model.json"
-                autocomplete="off"
-                spellcheck="false"
-              />
+              <label class="form-label" for="live2dModelPath">模型</label>
+              <div class="select-wrapper">
+                <select
+                  id="live2dModelPath"
+                  v-model="formData.live2dModelPath"
+                  class="select"
+                >
+                  <option
+                    v-for="m in availableModels"
+                    :key="m.path"
+                    :value="m.path"
+                  >
+                    {{ m.name }}（{{ m.format === 'cubism4' ? 'Cubism 4' : 'Cubism 2' }}）
+                  </option>
+                </select>
+                <svg class="select-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="m6 9 6 6 6-6"/>
+                </svg>
+              </div>
+              <p class="form-hint">模型文件夹放在 ~/.meow-vpet/models/ 下,放入新模型后请重开设置</p>
             </div>
             <div class="form-row">
               <label class="form-label" for="agentId">默认 Agent</label>
