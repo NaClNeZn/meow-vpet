@@ -8,8 +8,9 @@ let isShuttingDown = false
 // 默认 meow-tool 服务地址
 const DEFAULT_MEOW_TOOL_URL = 'http://localhost:4399'
 
-// 本地开发模式下 meow-tool 项目路径(可通过环境变量覆盖)
-const MEOW_TOOL_PATH = process.env.MEOW_TOOL_PATH || 'D:\\code\\NaCl\\meow-tool'
+// 本地开发模式下 meow-tool 项目路径(通过环境变量注入,无默认值避免泄露开发者本机路径)
+// 开发者本地调试时设置: set MEOW_TOOL_PATH=D:\code\NaCl\meow-tool
+const MEOW_TOOL_PATH = process.env.MEOW_TOOL_PATH || ''
 
 // 检测命令是否可用(返回 true/false)
 function commandExists(cmd: string): boolean {
@@ -40,8 +41,8 @@ export async function startMeowTool(): Promise<{ process: ChildProcess; mode: st
     args = ['start']
     mode = 'global'
   }
-  // 策略 2:本地开发模式(tsx 直接跑源码)
-  else if (existsSync(join(MEOW_TOOL_PATH, 'src', 'bin', 'meow.ts'))) {
+  // 策略 2:本地开发模式(tsx 直接跑源码,需显式设置 MEOW_TOOL_PATH)
+  else if (MEOW_TOOL_PATH && existsSync(join(MEOW_TOOL_PATH, 'src', 'bin', 'meow.ts'))) {
     command = 'node'
     args = ['--import', 'tsx', join(MEOW_TOOL_PATH, 'src', 'bin', 'meow.ts'), 'dev']
     mode = 'dev'
