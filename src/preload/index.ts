@@ -39,7 +39,13 @@ const api = {
     ipcRenderer.invoke('models:resolve-url', relPath) as Promise<string>,
   // 监听打开设置菜单事件
   onOpenSettings: (callback: () => void) =>
-    ipcRenderer.on('menu:open-settings', () => callback())
+    ipcRenderer.on('menu:open-settings', () => callback()),
+  // 监听打开动作面板菜单事件
+  onOpenMotions: (callback: () => void) =>
+    ipcRenderer.on('menu:open-motions', () => callback()),
+  // 监听打开表情面板菜单事件
+  onOpenExpressions: (callback: () => void) =>
+    ipcRenderer.on('menu:open-expressions', () => callback())
 }
 
 // 通过 contextBridge 安全地暴露 API 到渲染进程

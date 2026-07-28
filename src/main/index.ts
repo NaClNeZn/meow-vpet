@@ -107,6 +107,19 @@ function createWindow(): BrowserWindow {
   mainWindow.webContents.on('context-menu', () => {
     const menu = Menu.buildFromTemplate([
       {
+        label: '动作',
+        click: () => {
+          mainWindow?.webContents.send('menu:open-motions')
+        }
+      },
+      {
+        label: '表情',
+        click: () => {
+          mainWindow?.webContents.send('menu:open-expressions')
+        }
+      },
+      { type: 'separator' },
+      {
         label: '打开设置',
         click: () => {
           mainWindow?.webContents.send('menu:open-settings')

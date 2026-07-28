@@ -30,7 +30,8 @@
     "meow-vpet": "scripts/start.mjs"
   },
   "scripts": {
-    "dev": "node -e \"if(process.platform==='win32')require('child_process').execSync('chcp 65001',{stdio:'inherit'})\" && electron-vite dev",
+    "clean": "node -e \"['out','resources/models','resources/lib'].forEach(p=>{require('fs').rmSync(p,{recursive:true,force:true})});console.log('[dev] 已清空 out/, resources/models/, resources/lib/')\"",
+    "dev": "node -e \"if(process.platform==='win32')require('child_process').execSync('chcp 65001',{stdio:'inherit'})\" && npm run clean && electron-vite dev",
     "copy-resources": "node scripts/copy-resources.mjs",
     "build": "npm run copy-resources && electron-vite build",
     "preview": "electron-vite preview",

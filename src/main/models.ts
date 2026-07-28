@@ -20,18 +20,27 @@ export function getModelsDir(): string {
 //   1. electron-builder 打包:process.resourcesPath/models(extraResources)
 //   2. npm 包安装:app.getAppPath()/resources/models(npm 包内含 resources/)
 //   3. 开发模式:app.getAppPath()/src/renderer/public/models(源码目录)
+// 注意:dev 模式下即使 resources/models 存在(可能是之前 build 残留)也必须走源码目录,
+// 否则会读到旧的模型副本,导致加到 public/models 的新模型不生效
 function getBuiltinSourceDir(): string {
   if (app.isPackaged) {
     return join(process.resourcesPath, 'models')
   }
   const appPath = app.getAppPath()
+  // 判断是否为 npm 包安装模式:package.json 的 files 字段包含 out/main/index.js,
+  // npm 安装后不存在 src/ 源码目录,只有 out/ + resources/
+  // dev 模式下源码目录必然存在,优先走源码目录避免 resources/ 残留污染
+  const srcDir = join(appPath, 'src/renderer/public/models')
+  if (existsSync(srcDir)) {
+    return srcDir
+  }
   // npm 包模式:resources/models 已由 copy-resources 构建步骤复制
   const npmPkgDir = join(appPath, 'resources/models')
   if (existsSync(npmPkgDir)) {
     return npmPkgDir
   }
-  // 开发模式:从源码目录加载
-  return join(appPath, 'src/renderer/public/models')
+  // 兜底:都找不到时返回源码路径(让外层 existsSync 检查报错)
+  return srcDir
 }
 
 // 检查目录中是否存在模型定义文件(*.model3.json 或 *.model.json)

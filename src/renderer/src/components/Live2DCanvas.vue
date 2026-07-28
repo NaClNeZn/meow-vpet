@@ -158,13 +158,52 @@ async function loadModel(relPath: string): Promise<void> {
     recomputeFitScale()
     applyModelScale()
 
-    // 点击交互:启用模型的 autoInteract,它会自动监听 pointertap 事件
+    // 点击交互:启用 autoInteract,让 pointertap 事件正常触发 hit 回调
+    // 但不使用其默认的随机动作播放 —— 改为按 HitArea 选 motion group 播放
     ;(model as any).autoInteract = true
     model.on('hit', (hitAreas: string[]) => {
       if (hitAreas.length > 0) {
         emit('model-hit', 0, 0)
+        // 按 HitArea 名字匹配 motion group 并播放
+        // 约定:HitArea 名(Head/Body)对应 motion group 名(常见命名 flickHead/tapBody)
+        // 先尝试大小写不敏感匹配 group 名,匹配不到则退回按部位名直查 group
+        playMotionByHitArea(hitAreas[0])
       }
     })
+
+    // 按命中部位触发对应动作
+    // pixi-live2d-display 不强制 HitArea 名与 motion group 名一致,
+    // 业界惯例:Head 部位对应 flickHead 组,Body 部位对应 tapBody 组
+    // 这里用大小写不敏感包含匹配,兼容 Mao(Head/Body)、shizuku 无 HitArea 等情况
+    function playMotionByHitArea(hitAreaName: string): void {
+      if (!model) return
+      const definitions = (model as any).internalModel?.motionManager?.definitions
+      if (!definitions || typeof definitions !== 'object') return
+      const groups = Object.keys(definitions).filter(g => Array.isArray(definitions[g]) && definitions[g].length > 0)
+      if (groups.length === 0) return
+      const target = hitAreaName.toLowerCase()
+      // 1. 优先匹配包含部位名的 group(flickHead 含 head → Head 命中 flickHead)
+      const matched = groups.find(g => g.toLowerCase().includes(target))
+      // 2. 兜底:命中部位本身就是一个 motion group 名(部分模型 HitArea 和 group 同名)
+      const group = matched || groups.find(g => g.toLowerCase() === target)
+      if (group) {
+        const idx = Math.floor(Math.random() * definitions[group].length)
+        try {
+          ;(model as any).motion(group, idx)
+        } catch (err) {
+          console.warn('[Live2DCanvas] 触发动作失败:', err)
+        }
+      } else {
+        // 3. 都匹配不到:从 Idle 组兜底,避免点击无反应
+        const fallback = groups.find(g => g.toLowerCase().includes('idle')) || groups[0]
+        const idx = Math.floor(Math.random() * definitions[fallback].length)
+        try {
+          ;(model as any).motion(fallback, idx)
+        } catch {
+          /* ignore */
+        }
+      }
+    }
 
     emit('model-loaded', model)
   } catch (err) {

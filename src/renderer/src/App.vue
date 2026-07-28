@@ -1,8 +1,11 @@
 <script setup lang="ts">
-import { ref, onMounted, computed, watch } from 'vue'
+import { ref, onMounted, computed, watch, shallowRef } from 'vue'
+import type { ShallowRef } from 'vue'
 import Live2DCanvas from './components/Live2DCanvas.vue'
 import ChatPanel from './components/ChatPanel.vue'
 import Settings from './views/Settings.vue'
+import MotionsPanel from './views/MotionsPanel.vue'
+import ExpressionsPanel from './views/ExpressionsPanel.vue'
 import { useConfigStore } from './stores/config'
 import { setBaseUrl } from './api/client'
 
@@ -13,6 +16,12 @@ const modelLoaded = ref(false)
 const backendStatus = ref<string>('starting')
 const showChat = ref(false)
 const showSettings = ref(false)
+// 动作面板与表情面板:右键菜单触发显示,各自独立显示
+const showMotions = ref(false)
+const showExpressions = ref(false)
+// 当前已加载的 Live2D 模型实例(shallowRef 避免 Vue 深度代理 PIXI 对象)
+// 通过 prop 传给 MotionsPanel/ExpressionsPanel,面板调用 model.motion/expression 触发
+const liveModel: ShallowRef<any> = shallowRef<any>(null)
 // 从配置读取 agentId / systemPrompt / modelScale / modelPath
 const agentId = ref<string | undefined>(undefined)
 const systemPrompt = ref<string | undefined>(undefined)
@@ -38,6 +47,14 @@ onMounted(async () => {
     // 监听「打开设置」菜单事件(托盘/右键菜单触发)
     window.app.onOpenSettings(() => {
       showSettings.value = true
+    })
+    // 监听「打开动作面板」菜单事件
+    window.app.onOpenMotions(() => {
+      showMotions.value = true
+    })
+    // 监听「打开表情面板」菜单事件
+    window.app.onOpenExpressions(() => {
+      showExpressions.value = true
     })
   } else {
     // 浏览器环境(直接访问 dev server):主动探测后端健康检查
@@ -108,8 +125,9 @@ function updateStatus() {
   status.value = map[backendStatus.value] || backendStatus.value
 }
 
-function onModelLoaded() {
+function onModelLoaded(model: any) {
   modelLoaded.value = true
+  liveModel.value = model
 }
 
 // 上一次 setIgnoreMouseEvents 的状态,用于去重避免冗余 IPC 调用
@@ -170,6 +188,14 @@ function onSettingsSaved() {
       v-model:visible="showSettings"
       @saved="onSettingsSaved"
       @model-scale-change="onModelScaleChange"
+    />
+    <MotionsPanel
+      v-model:visible="showMotions"
+      :model="liveModel"
+    />
+    <ExpressionsPanel
+      v-model:visible="showExpressions"
+      :model="liveModel"
     />
   </div>
 </template>
