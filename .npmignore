@@ -1,0 +1,13 @@
+# .npmignore 存在时,npm 使用此文件替代 .gitignore
+# 这样 resources/models/ 和 resources/lib/(gitignored 的构建产物)能正确打入 npm 包
+
+# TypeScript 增量构建缓存(不需要进 npm 包)
+out/types/
+*.tsbuildinfo
+
+# 开发 / 构建临时目录(不在 files 白名单中,双保险)
+release/
+.tmp/
+.tmp-*
+coverage/
+.cache/

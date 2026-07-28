@@ -1,10 +1,34 @@
 {
   "name": "meow-vpet",
   "version": "0.1.0",
-  "description": "Live2D 虚拟桌宠,基于 meow-tool 后端",
+  "description": "Live2D virtual table pet, based on meow-tool backend (Electron + Vue3 + PixiJS)",
   "main": "out/main/index.js",
   "author": "naclnezn",
   "license": "MIT",
+  "homepage": "https://github.com/naclnezn/meow-vpet",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/naclnezn/meow-vpet.git"
+  },
+  "bugs": {
+    "url": "https://github.com/naclnezn/meow-vpet/issues"
+  },
+  "keywords": [
+    "live2d",
+    "desktop-pet",
+    "electron",
+    "vue3",
+    "pixijs",
+    "meow-tool",
+    "ai",
+    "pet"
+  ],
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "bin": {
+    "meow-vpet": "scripts/start.mjs"
+  },
   "scripts": {
     "dev": "node -e \"if(process.platform==='win32')require('child_process').execSync('chcp 65001',{stdio:'inherit'})\" && electron-vite dev",
     "copy-resources": "node scripts/copy-resources.mjs",
@@ -17,36 +41,47 @@
     "build:mac": "npm run copy-resources && electron-vite build && electron-builder --mac",
     "build:linux": "npm run copy-resources && electron-vite build && electron-builder --linux",
     "pack:win": "npm run copy-resources && electron-vite build && electron-builder --win --dir",
-    "prepublishOnly": "npm run copy-resources"
+    "start": "node scripts/start.mjs",
+    "prepublishOnly": "node scripts/prepublish.mjs",
+    "postinstall": "node scripts/postinstall.mjs",
+    "publish": "node scripts/publish.mjs"
   },
   "files": [
-    "src/",
-    "scripts/",
-    "resources/",
-    "electron.vite.config.ts",
-    "tsconfig.json",
-    "tsconfig.node.json",
-    "tsconfig.web.json"
+    "out/main/",
+    "out/preload/",
+    "out/renderer/assets/",
+    "out/renderer/lib/",
+    "out/renderer/index.html",
+    "resources/models/",
+    "resources/tray/",
+    "scripts/start.mjs",
+    "scripts/postinstall.mjs",
+    "scripts/copy-resources.mjs",
+    "package.json"
   ],
   "dependencies": {
+    "electron": "^33.0.0",
     "pixi-live2d-display": "^0.4.0",
     "pixi.js": "^6.5.10",
-    "vue": "^3.4.0"
+    "vue": "^3.4.0",
+    "zod": "^3.24.0"
   },
   "devDependencies": {
     "@element-plus/icons-vue": "^2.3.0",
     "@types/node": "^22.10.0",
     "@vitejs/plugin-vue": "^5.1.0",
     "axios": "^1.7.0",
-    "electron": "^33.0.0",
     "electron-builder": "^25.0.0",
     "electron-vite": "^2.3.0",
     "element-plus": "^2.8.0",
     "pinia": "^2.3.0",
     "typescript": "^5.7.0",
     "vite": "^5.4.0",
-    "vue-tsc": "^2.1.0",
-    "zod": "^3.24.0"
+    "vue-tsc": "^2.1.0"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
   },
   "build": {
     "appId": "com.naclnezn.meow-vpet",

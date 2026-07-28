@@ -16,14 +16,22 @@ export function getModelsDir(): string {
 }
 
 // 内置模型源目录
-// 开发模式:项目根/src/renderer/public/models
-//   electron-vite dev 模式下 app.getAppPath() 返回项目根目录(package.json 所在目录)
-// 生产模式:process.resourcesPath/models(electron-builder extraResources)
+// 三种运行模式:
+//   1. electron-builder 打包:process.resourcesPath/models(extraResources)
+//   2. npm 包安装:app.getAppPath()/resources/models(npm 包内含 resources/)
+//   3. 开发模式:app.getAppPath()/src/renderer/public/models(源码目录)
 function getBuiltinSourceDir(): string {
   if (app.isPackaged) {
     return join(process.resourcesPath, 'models')
   }
-  return join(app.getAppPath(), 'src/renderer/public/models')
+  const appPath = app.getAppPath()
+  // npm 包模式:resources/models 已由 copy-resources 构建步骤复制
+  const npmPkgDir = join(appPath, 'resources/models')
+  if (existsSync(npmPkgDir)) {
+    return npmPkgDir
+  }
+  // 开发模式:从源码目录加载
+  return join(appPath, 'src/renderer/public/models')
 }
 
 // 检查目录中是否存在模型定义文件(*.model3.json 或 *.model.json)
